@@ -12,11 +12,37 @@ from requests import ConnectTimeout
 from requests import ReadTimeout
 from tabulate import tabulate
 import maxminddb
+import ping3
 
 from libs.log import logger
 
 reader = maxminddb.open_database("GeoLite2-Country.mmdb")
 
+HTTPS_URL_RE = re.compile(r'https://'
+                          r'(?P<hostname>[0-9a-zA-Z._~-]+)'
+                          r'(?P<port>:[0-9]+)?'
+                          r'(?P<path>[0-9a-zA-Z._~/-]+)?')
+def ping(host, time_out=1):
+    """
+    检查ip是否能被ping通，time_out为超时时间，单位为秒，默认为1秒
+    """
+    print(f'host = {host}, time_out = {time_out}')
+    try:
+        response_time = ping3.ping(host, timeout=time_out)
+        print(f'response_time: [{response_time}]')
+        #  如果能ping通（测试发现ping不通时函数有一定几率不到超时时间就提前返回）
+        if response_time is not False and response_time is not None and response_time < 0.1:
+            print(
+                f'ping3.ping({host}, timeout={time_out}) response_time: [{response_time}]')
+            return True
+
+    except Exception as e:
+        print(f"检测Ping发生错误：{e}")
+        # raise Exception(f"Error，检测 IP[{ip}] 检测Ping发生错误：{e}")
+        pass
+
+    # 不能ping通（超时或异常）
+    return False
 
 def parse_resolvers(content):
     result = re.findall(r"^##.+?(?P<resolver>.+$)(?P<description>(\n|.)+?)(?P<stamp>^sdns.+)",
@@ -114,6 +140,15 @@ def main():
                 continue
         ipv4_resolvers.append(resolver)
 
+    if len(ipv4_resolvers) != 0:
+        for doh_url in ipv4_resolvers:
+            doh_url_matches = HTTPS_URL_RE.findall(doh_url["url"])
+            if len(doh_url_matches) == 0:
+                continue
+            else:
+                for doh_url in doh_url_matches:
+                    if not ping(doh_url[0]):
+                        continue
     result = []
     with concurrent.futures.ThreadPoolExecutor() as executor:
         future_list = {executor.submit(
